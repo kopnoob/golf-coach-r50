@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import statistics
 
 from app.garmin.models import ShotData

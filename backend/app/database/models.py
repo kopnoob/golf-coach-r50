@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """SQL-skjema og database-modeller for Golf Coach R50."""
 
 SCHEMA = """

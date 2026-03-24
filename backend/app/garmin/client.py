@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 from garminconnect import Garmin
 
@@ -69,7 +72,7 @@ class GarminClient:
             raise RuntimeError("Ikke logget inn på Garmin Connect")
 
         try:
-            return self._client.get_activity(activity_id)
+            return self._client.get_activity_details(activity_id)
         except Exception as e:
             logger.error("Feil ved henting av aktivitet %s: %s", activity_id, e)
             return None
