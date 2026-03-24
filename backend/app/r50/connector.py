@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import struct
+from pathlib import Path
 from typing import AsyncGenerator, Callable, Optional
 
 from zeroconf import ServiceBrowser, ServiceInfo, Zeroconf
@@ -23,6 +24,15 @@ from zeroconf import ServiceBrowser, ServiceInfo, Zeroconf
 logger = logging.getLogger(__name__)
 
 SERVICE_TYPE = "_garmin-golf-launch-monitor-api-service._tcp.local."
+KEY_FILE = Path(__file__).parent / "r50_key.pem"
+
+
+def _load_rsa_key() -> Optional[str]:
+    """Last RSA-nøkkel fra fil (om tilgjengelig)."""
+    if KEY_FILE.exists():
+        return KEY_FILE.read_text()
+    return None
+
 
 # Konverteringsfaktorer
 MPS_TO_KMH = 3.6
@@ -100,7 +110,10 @@ class R50Connection:
         return self._connected
 
     async def read_message(self) -> Optional[dict]:
-        """Les én melding fra R50 (4-byte length prefix + JSON)."""
+        """Les én melding fra R50 (4-byte length prefix + JSON).
+
+        Håndterer både ukrypterte og krypterte meldinger (iv/sk/pl envelope).
+        """
         if not self._reader:
             return None
         try:
@@ -114,7 +127,18 @@ class R50Connection:
 
             # Les payload
             payload = await self._reader.readexactly(length)
-            return json.loads(payload.decode("utf-8"))
+            data = json.loads(payload.decode("utf-8"))
+
+            # Sjekk om meldingen er kryptert (har iv/sk/pl felter)
+            if isinstance(data, dict) and "pl" in data and "sk" in data and "iv" in data:
+                decrypted = self._try_decrypt(data)
+                if decrypted:
+                    return decrypted
+                # Kan ikke dekryptere — logg rå envelope for debugging
+                logger.debug("Kryptert melding (kan ikke dekryptere): iv=%s...", str(data["iv"])[:20])
+                return {"_encrypted": True, "_raw": data}
+
+            return data
 
         except asyncio.IncompleteReadError:
             logger.info("R50 lukket tilkoblingen")
@@ -122,6 +146,61 @@ class R50Connection:
             return None
         except Exception as e:
             logger.error("Feil ved lesing fra R50: %s", e)
+            return None
+
+    def _try_decrypt(self, envelope: dict) -> Optional[dict]:
+        """Forsøk å dekryptere en R50-melding.
+
+        Protokoll:
+          iv: base64(hex_string) → raw bytes
+          sk: RSA-OAEP-SHA1 kryptert sesjonsnøkkel (base64)
+          pl: AES-128-CBC + PKCS7 kryptert payload (base64)
+
+        Returnerer None hvis vi ikke har nøklene.
+        """
+        rsa_key_pem = _load_rsa_key()
+        if not rsa_key_pem:
+            return None
+
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+            # Last RSA-nøkkel
+            private_key = serialization.load_pem_private_key(
+                rsa_key_pem.encode(), password=None
+            )
+
+            # Dekod IV: base64 → hex string → bytes
+            iv_hex = base64.b64decode(envelope["iv"]).decode("utf-8")
+            iv = bytes.fromhex(iv_hex)
+
+            # Dekrypter sesjonsnøkkel med RSA-OAEP-SHA1
+            sk_encrypted = base64.b64decode(envelope["sk"])
+            session_key = private_key.decrypt(
+                sk_encrypted,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA1()),
+                    algorithm=hashes.SHA1(),
+                    label=None,
+                ),
+            )
+
+            # Dekrypter payload med AES-128-CBC
+            pl_encrypted = base64.b64decode(envelope["pl"])
+            cipher = Cipher(algorithms.AES(session_key), modes.CBC(iv))
+            decryptor = cipher.decryptor()
+            padded = decryptor.update(pl_encrypted) + decryptor.finalize()
+
+            # Fjern PKCS7 padding
+            pad_len = padded[-1]
+            plaintext = padded[:-pad_len]
+
+            return json.loads(plaintext.decode("utf-8"))
+
+        except Exception as e:
+            logger.debug("Dekryptering feilet: %s", e)
             return None
 
     async def send_message(self, data: dict) -> None:
