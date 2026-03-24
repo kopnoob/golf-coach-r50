@@ -47,6 +47,11 @@ export default function Dashboard() {
           </h1>
           <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 14 }}>
             AI-drevet golftrener for Garmin Approach R50
+            {!connected && (
+              <span style={{ color: "#eab308", marginLeft: 8 }}>
+                (Demo-modus)
+              </span>
+            )}
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
