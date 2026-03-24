@@ -154,6 +154,15 @@ export function useShots() {
     }
   }, []);
 
+  const loadShots = useCallback((newShots: ShotEntry[]) => {
+    setShots(newShots);
+  }, []);
+
+  const setCoaching = useCallback((text: string) => {
+    setCoachingText(text);
+    setIsCoaching(false);
+  }, []);
+
   const latestShot = shots.length > 0 ? shots[shots.length - 1] : null;
 
   return {
@@ -162,5 +171,7 @@ export function useShots() {
     coachingText,
     isCoaching,
     handleMessage,
+    loadShots,
+    setCoaching,
   };
 }
